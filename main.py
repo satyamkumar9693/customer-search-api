@@ -21,7 +21,7 @@ from admin_router import router as admin_router
 app = FastAPI(
     title="Customer Search API",
     description="Hugging Face dataset real-time search using DuckDB",
-    version="3.0.0"
+    version="3.2.0"
 )
 
 # ---------- Database tables बनाओ (startup पर) ----------
@@ -47,7 +47,7 @@ async def root():
     return {
         "status": "ok",
         "message": "Customer Search API is running",
-        "version": "3.0.0"
+        "version": "3.2.0"
     }
 
 @app.get("/health")
@@ -124,7 +124,7 @@ async def parquet_footer(filename: str):
 
 
 # ============================================================
-# 4. असली सर्च (DuckDB Real Data Search)
+# 4. असली सर्च (DuckDB Real Data Search - ALL FILES)
 # ============================================================
 
 @app.get("/search")
@@ -132,46 +132,34 @@ async def search(
     phone: str = Query(..., description="Phone number to search (e.g. 9876543210)"),
     api_key: str = Depends(get_current_api_key)
 ):
-    """
-    DuckDB की मदद से Hugging Face की Parquet फाइल में असली सर्च।
-    सिर्फ 10 रिजल्ट दिखाएगा ताकि Render Free Plan की RAM फुल न हो।
-    """
     conn = None
     try:
-        # 1. DuckDB कनेक्शन बनाओ (In-Memory)
         conn = duckdb.connect()
-        
-        # 2. httpfs एक्सटेंशन लोड करो (Hugging Face से डेटा पढ़ने के लिए)
         conn.execute("INSTALL httpfs;")
         conn.execute("LOAD httpfs;")
         
-        # 3. Hugging Face का Token सेट करो (ताकि प्राइवेट डेटासेट पढ़ा जा सके)
         if HF_TOKEN:
             conn.execute(f"CREATE SECRET (TYPE HUGGINGFACE, TOKEN '{HF_TOKEN}');")
 
-        # 4. सर्च क्वेरी (सिर्फ ज़रूरी कॉलम और LIMIT 10)
-        # हम production_indexes फ़ोल्डर की फाइल पर सर्च कर रहे हैं
+        # यहाँ * लगाया गया है ताकि सारी 46 फाइलों में एक साथ सर्च हो
         query = f"""
             SELECT name, phoneNumber, district, state, pincode
-            FROM read_parquet('hf://datasets/{REPO_ID}/production_indexes/idx_prod_p1_6.parquet')
+            FROM read_parquet('hf://datasets/{REPO_ID}/production_indexes/*.parquet')
             WHERE phoneNumber = ?
             LIMIT 10
         """
         
-        # 5. क्वेरी चलाओ
         results = conn.execute(query, [phone]).fetchall()
 
-        # 6. अगर डेटा नहीं मिला
         if not results:
             return {
                 "status": "success",
                 "query": phone,
-                "message": "No records found for this phone number.",
+                "message": "No records found for this phone number in any index file.",
                 "total_found": 0,
                 "results": []
             }
 
-        # 7. अगर डेटा मिल गया, तो उसे फॉर्मेट करो
         formatted_results = []
         for row in results:
             formatted_results.append({
@@ -182,7 +170,6 @@ async def search(
                 "pincode": row[4]
             })
 
-        # 8. रिजल्ट रिटर्न करो
         return {
             "status": "success",
             "query": phone,
@@ -194,6 +181,5 @@ async def search(
         raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
     
     finally:
-        # काम खत्म होने पर कनेक्शन बंद करो (RAM फ्री करने के लिए)
         if conn:
             conn.close()

@@ -1,8 +1,3 @@
-# ============================================================
-# main.py - Customer Search API
-# Hugging Face Dataset + DuckDB Real Search + Web UI + Custom URL
-# ============================================================
-
 import os
 import duckdb
 from fastapi import FastAPI, HTTPException, Depends, Query
@@ -10,37 +5,22 @@ from fastapi.responses import HTMLResponse
 from huggingface_hub import HfApi, HfFileSystem
 import pyarrow.parquet as pq
 
-# ---------- अपनी फाइलों से import ----------
 from database import init_db, get_key_info, update_last_used
 from auth_utils import get_current_api_key
 from admin_router import router as admin_router
 
-
-# ============================================================
-# 1. ऐप बनाओ और setup करो
-# ============================================================
-app = FastAPI(
-    title="Customer Search API",
-    description="Hugging Face dataset real-time search",
-    version="4.1.0"
-)
-
+app = FastAPI(title="Customer Search API", version="4.1.0")
 init_db()
 app.include_router(admin_router)
 
 HF_TOKEN = os.environ.get("HF_TOKEN")
 REPO_ID = "Gauravbeniwal0001/Numberinfoapibygauravbeniwal"
-
 api = HfApi(token=HF_TOKEN)
 fs = HfFileSystem(token=HF_TOKEN)
 
-
-# ============================================================
-# 🌐 2. वेब इंटरफ़ेस (Frontend UI) - रूट पेज पर
-# ============================================================
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    html_content = """
+    return """
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -90,13 +70,8 @@ async def home():
                 loader.style.display = 'block';
 
                 try {
-                    // यहाँ आपकी नई API Key 'VIVEK' डाल दी गई है
                     const apiKey = "VIVEK"; 
-                    
-                    // नया URL Format: /num/{phone}?api_key={apiKey}
-                    const response = await fetch(`/num/${phone}?api_key=${apiKey}`, {
-                        method: 'GET'
-                    });
+                    const response = await fetch(`/num/${phone}?api_key=${apiKey}`, { method: 'GET' });
 
                     const data = await response.json();
                     loader.style.display = 'none';
@@ -133,22 +108,13 @@ async def home():
     </body>
     </html>
     """
-    return html_content
 
-
-# ============================================================
-# 3. नया Endpoint: /num/{phone}?api_key=YOUR_KEY
-# ============================================================
 @app.get("/num/{phone}")
-async def search_by_path(
-    phone: str, 
-    api_key: str = Query(..., description="API Key for authentication")
-):
-    # API Key को Query Parameter (?api_key=xyz) से चेक करें
+async def search_by_path(phone: str, api_key: str = Query(...)):
     row = get_key_info(api_key)
     if not row:
         raise HTTPException(status_code=401, detail="Invalid API Key")
-    if not row[3]: # is_active (0 या 1)
+    if not row[3]:
         raise HTTPException(status_code=403, detail="API Key is disabled")
     update_last_used(api_key)
 
@@ -157,51 +123,6 @@ async def search_by_path(
         conn = duckdb.connect()
         conn.execute("INSTALL httpfs;")
         conn.execute("LOAD httpfs;")
-        
-        if HF_TOKEN:
-            conn.execute(f"CREATE SECRET (TYPE HUGGINGFACE, TOKEN '{HF_TOKEN}');")
-
-        # सभी 46 फाइलों में सर्च
-        query = f"""
-            SELECT name, phoneNumber, district, state, pincode
-            FROM read_parquet('hf://datasets/{REPO_ID}/production_indexes/*.parquet')
-            WHERE phoneNumber = ?
-            LIMIT 10
-        """
-        
-        results = conn.execute(query, [phone]).fetchall()
-
-        if not results:
-            return {"status": "success", "query": phone, "total_found": 0, "results": []}
-
-        formatted_results = []
-        for r in results:
-            formatted_results.append({
-                "name": r[0], "phoneNumber": r[1], "district": r[2], "state": r[3], "pincode": r[4]
-            })
-
-        return {"status": "success", "query": phone, "total_found": len(formatted_results), "results": formatted_results}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
-    finally:
-        if conn: conn.close()
-
-
-# ============================================================
-# 4. पुराना Search Endpoint (Header Auth के लिए)
-# ============================================================
-@app.get("/search")
-async def search_header_auth(
-    phone: str = Query(..., description="Phone number to search"),
-    api_key: str = Depends(get_current_api_key)
-):
-    conn = None
-    try:
-        conn = duckdb.connect()
-        conn.execute("INSTALL httpfs;")
-        conn.execute("LOAD httpfs;")
-        
         if HF_TOKEN:
             conn.execute(f"CREATE SECRET (TYPE HUGGINGFACE, TOKEN '{HF_TOKEN}');")
 
@@ -211,29 +132,18 @@ async def search_header_auth(
             WHERE phoneNumber = ?
             LIMIT 10
         """
-        
         results = conn.execute(query, [phone]).fetchall()
 
         if not results:
             return {"status": "success", "query": phone, "total_found": 0, "results": []}
 
-        formatted_results = []
-        for r in results:
-            formatted_results.append({
-                "name": r[0], "phoneNumber": r[1], "district": r[2], "state": r[3], "pincode": r[4]
-            })
-
-        return {"status": "success", "query": phone, "total_found": len(formatted_results), "results": formatted_results}
-
+        formatted = [{"name": r[0], "phoneNumber": r[1], "district": r[2], "state": r[3], "pincode": r[4]} for r in results]
+        return {"status": "success", "query": phone, "total_found": len(formatted), "results": formatted}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         if conn: conn.close()
 
-
-# ============================================================
-# 5. Health Check
-# ============================================================
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "hf_token_configured": HF_TOKEN is not None}
+    return {"status": "healthy"}

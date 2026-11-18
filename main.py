@@ -1,42 +1,30 @@
 
 from fastapi import FastAPI, HTTPException
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, hf_hub_url
+import requests
 import os
 
 app = FastAPI(
-    title="Numberinfo Dataset API",
-    version="1.1"
+    title="Dataset Inspector API",
+    version="2.0"
 )
 
 REPO_ID = "Gauravbeniwal0001/Numberinfoapibygauravbeniwal"
 TOKEN = os.getenv("HF_TOKEN")
 
-
-def get_hf_api():
-    return HfApi(token=TOKEN)
-
-
 @app.get("/")
 def home():
-    return {
-        "message": "Hugging Face Dataset API is running",
-        "status": "online"
-    }
-
+    return {"status": "online"}
 
 @app.get("/health")
 def health():
     return {"status": "OK"}
 
-
 @app.get("/dataset/info")
 def dataset_info():
     try:
-        api = get_hf_api()
-
-        info = api.dataset_info(
-            repo_id=REPO_ID
-        )
+        api = HfApi(token=TOKEN)
+        info = api.dataset_info(repo_id=REPO_ID)
 
         return {
             "status": "connected",
@@ -44,68 +32,54 @@ def dataset_info():
             "private": info.private,
             "sha": info.sha
         }
-
     except Exception:
-        raise HTTPException(
-            status_code=502,
-            detail="Hugging Face connection failed"
-        )
+        raise HTTPException(502, "Hugging Face connection failed")
 
+@app.get("/dataset/index-metadata")
+def index_metadata():
+    filename = "production_indexes/idx_prod_p1_6.parquet"
 
-@app.get("/dataset/files")
-def dataset_files():
     try:
-        api = get_hf_api()
+        api = HfApi(token=TOKEN)
 
-        files = api.list_repo_files(
+        files = api.get_paths_info(
             repo_id=REPO_ID,
+            paths=[filename],
             repo_type="dataset"
         )
 
-        return {
-            "status": "connected",
-            "total_files": len(files),
-            "files": files
-        }
+        if not files:
+            raise HTTPException(404, "File not found")
 
-    except Exception:
-        raise HTTPException(
-            status_code=502,
-            detail="Could not read dataset file list"
-        )
-
-
-@app.get("/dataset/file-info")
-def dataset_file_info():
-    try:
-        api = get_hf_api()
-
-        paths = [
-            "part1.parquet",
-            "part2a.parquet",
-            "part2b_new.parquet",
-            "production_indexes/idx_prod_p1_6.parquet"
-        ]
-
-        info = api.get_paths_info(
+        url = hf_hub_url(
             repo_id=REPO_ID,
-            paths=paths,
+            filename=filename,
             repo_type="dataset"
         )
+
+        headers = {}
+        if TOKEN:
+            headers["Authorization"] = f"Bearer {TOKEN}"
+
+        response = requests.head(
+            url,
+            headers=headers,
+            allow_redirects=True,
+            timeout=30
+        )
+        response.raise_for_status()
 
         return {
             "status": "success",
-            "files": [
-                {
-                    "name": item.path,
-                    "size_bytes": item.size
-                }
-                for item in info
-            ]
+            "filename": filename,
+            "size_bytes": files[0].size,
+            "content_type": response.headers.get("Content-Type"),
+            "file_access": "verified",
+            "note": "Metadata checked; file contents not downloaded"
         }
 
+    except HTTPException:
+        raise
     except Exception:
-        raise HTTPException(
-            status_code=502,
-            detail="Could not inspect dataset files"
-        )
+        raise HTTPException(502, "Could not inspect index metadata")
+        

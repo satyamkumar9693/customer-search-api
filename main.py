@@ -22,7 +22,7 @@ from admin_router import router as admin_router
 app = FastAPI(
     title="Customer Search API",
     description="Hugging Face dataset real-time search",
-    version="4.0.0"
+    version="4.1.0"
 )
 
 init_db()
@@ -90,8 +90,8 @@ async def home():
                 loader.style.display = 'block';
 
                 try {
-                    // आपकी API Key
-                    const apiKey = "sk-2M9ba7_uCJm6j6Sfz-QENs5Fc3za2ruXd"; 
+                    // यहाँ आपकी नई API Key 'VIVEK' डाल दी गई है
+                    const apiKey = "VIVEK"; 
                     
                     // नया URL Format: /num/{phone}?api_key={apiKey}
                     const response = await fetch(`/num/${phone}?api_key=${apiKey}`, {
@@ -189,7 +189,7 @@ async def search_by_path(
 
 
 # ============================================================
-# 4. पुराना Search Endpoint (Header Auth के लिए, Swagger के लिए)
+# 4. पुराना Search Endpoint (Header Auth के लिए)
 # ============================================================
 @app.get("/search")
 async def search_header_auth(

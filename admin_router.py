@@ -1,18 +1,29 @@
-# admin_router.py
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 from auth_utils import verify_admin_key
-from database import create_key, list_keys, toggle_key, get_key_info
+from database import create_key, create_custom_key, list_keys, toggle_key, get_key_info
 
 router = APIRouter(prefix="/admin", dependencies=[Depends(verify_admin_key)])
 
 class KeyCreate(BaseModel):
     label: str = "default"
+    custom_key: Optional[str] = None
 
 @router.post("/keys")
 async def new_key(payload: KeyCreate):
-    key = create_key(payload.label)
-    return {"status": "created", "key": key, "label": payload.label}
+    if payload.custom_key:
+        if len(payload.custom_key) < 5:
+            raise HTTPException(status_code=400, detail="Custom key must be at least 5 characters long")
+        
+        if get_key_info(payload.custom_key):
+            raise HTTPException(status_code=400, detail="This custom key already exists")
+            
+        key = create_custom_key(payload.custom_key, payload.label)
+        return {"status": "created", "key": key, "label": payload.label, "type": "custom"}
+    else:
+        key = create_key(payload.label)
+        return {"status": "created", "key": key, "label": payload.label, "type": "random"}
 
 @router.get("/keys")
 async def all_keys():

@@ -2,3 +2,8 @@ fastapi
 uvicorn
 huggingface_hub
 requests
+pyarrow
+fsspec
+duckdb
+python-jose[cryptography]
+passlib[bcrypt]

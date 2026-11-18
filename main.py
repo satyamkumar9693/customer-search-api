@@ -1,16 +1,17 @@
 # ============================================================
 # main.py - Customer Search API
-# Hugging Face Dataset + DuckDB Real Search + API Key System
+# Hugging Face Dataset + DuckDB Real Search + Web UI + Custom URL
 # ============================================================
 
 import os
 import duckdb
 from fastapi import FastAPI, HTTPException, Depends, Query
+from fastapi.responses import HTMLResponse
 from huggingface_hub import HfApi, HfFileSystem
 import pyarrow.parquet as pq
 
-# ---------- अपनी नई फाइलों से import ----------
-from database import init_db
+# ---------- अपनी फाइलों से import ----------
+from database import init_db, get_key_info, update_last_used
 from auth_utils import get_current_api_key
 from admin_router import router as admin_router
 
@@ -20,17 +21,13 @@ from admin_router import router as admin_router
 # ============================================================
 app = FastAPI(
     title="Customer Search API",
-    description="Hugging Face dataset real-time search using DuckDB",
-    version="3.2.0"
+    description="Hugging Face dataset real-time search",
+    version="4.0.0"
 )
 
-# ---------- Database tables बनाओ (startup पर) ----------
 init_db()
-
-# ---------- Admin routes जोड़ो (/admin/... सारे endpoints) ----------
 app.include_router(admin_router)
 
-# ---------- Hugging Face setup ----------
 HF_TOKEN = os.environ.get("HF_TOKEN")
 REPO_ID = "Gauravbeniwal0001/Numberinfoapibygauravbeniwal"
 
@@ -39,97 +36,164 @@ fs = HfFileSystem(token=HF_TOKEN)
 
 
 # ============================================================
-# 2. पुराने endpoints (जो पहले से काम कर रहे हैं)
+# 🌐 2. वेब इंटरफ़ेस (Frontend UI) - रूट पेज पर
 # ============================================================
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Customer Search</title>
+        <style>
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; display: flex; justify-content: center; padding-top: 50px; margin: 0; }
+            .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 90%; max-width: 500px; }
+            h2 { text-align: center; color: #333; margin-bottom: 20px; }
+            .search-box { display: flex; gap: 10px; margin-bottom: 20px; }
+            input { flex: 1; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; outline: none; }
+            input:focus { border-color: #007bff; }
+            button { padding: 12px 20px; background-color: #007bff; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; }
+            button:hover { background-color: #0056b3; }
+            .result { margin-top: 20px; }
+            .card { background: #f9f9f9; border-left: 5px solid #007bff; padding: 15px; margin-bottom: 10px; border-radius: 5px; }
+            .card p { margin: 5px 0; color: #555; font-size: 14px; }
+            .card strong { color: #333; }
+            .error { color: red; text-align: center; font-weight: bold; }
+            .loader { display: none; text-align: center; color: #007bff; margin-top: 10px; font-weight: bold; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h2>🔍 Number Search</h2>
+            <div class="search-box">
+                <input type="text" id="phone" placeholder="Enter 10 digit number" maxlength="10">
+                <button onclick="searchNumber()">Search</button>
+            </div>
+            <div id="loader" class="loader">Searching... (May take 1-2 minutes)</div>
+            <div id="result" class="result"></div>
+        </div>
 
-@app.get("/")
-async def root():
-    return {
-        "status": "ok",
-        "message": "Customer Search API is running",
-        "version": "3.2.0"
-    }
-
-@app.get("/health")
-async def health():
-    return {
-        "status": "healthy",
-        "hf_token_configured": HF_TOKEN is not None
-    }
-
-@app.get("/dataset/info")
-async def dataset_info():
-    try:
-        info = api.dataset_info(REPO_ID)
-        return {
-            "status": "success",
-            "repo_id": REPO_ID,
-            "sha": info.sha,
-            "last_modified": str(info.lastModified)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/dataset/files")
-async def list_files():
-    try:
-        files = api.list_repo_files(repo_id=REPO_ID, repo_type="dataset")
-        return {
-            "status": "success",
-            "total_files": len(files),
-            "files": files
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/dataset/file-info")
-async def file_info(filename: str):
-    try:
-        info = api.dataset_info(REPO_ID)
-        for sibling in info.siblings:
-            if sibling.rfilename == filename:
-                return {
-                    "status": "success",
-                    "filename": filename,
-                    "size_bytes": sibling.size,
-                    "size_gb": round(sibling.size / (1024**3), 2) if sibling.size else None
+        <script>
+            async function searchNumber() {
+                const phone = document.getElementById('phone').value;
+                const resultDiv = document.getElementById('result');
+                const loader = document.getElementById('loader');
+                
+                if(phone.length < 10) {
+                    alert("Please enter a valid 10-digit number");
+                    return;
                 }
-        raise HTTPException(status_code=404, detail="File not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
+                resultDiv.innerHTML = '';
+                loader.style.display = 'block';
 
-# ============================================================
-# 3. Parquet Footer (बिना file download किए schema देखना)
-# ============================================================
+                try {
+                    // आपकी API Key
+                    const apiKey = "sk-2M9ba7_uCJm6j6Sfz-QENs5Fc3za2ruXd"; 
+                    
+                    // नया URL Format: /num/{phone}?api_key={apiKey}
+                    const response = await fetch(`/num/${phone}?api_key=${apiKey}`, {
+                        method: 'GET'
+                    });
 
-@app.get("/dataset/parquet-footer")
-async def parquet_footer(filename: str):
-    path = f"datasets/{REPO_ID}/{filename}"
-    try:
-        with fs.open(path, "rb") as f:
-            pf = pq.ParquetFile(f)
-            schema = pf.schema_arrow
-            metadata = pf.metadata
-            return {
-                "status": "success",
-                "filename": filename,
-                "num_rows": metadata.num_rows,
-                "num_row_groups": metadata.num_row_groups,
-                "num_columns": len(schema.names),
-                "schema": [{"name": fld.name, "type": str(fld.type)} for fld in schema]
+                    const data = await response.json();
+                    loader.style.display = 'none';
+
+                    if (response.status !== 200) {
+                        resultDiv.innerHTML = `<p class="error">Error: ${data.detail}</p>`;
+                        return;
+                    }
+
+                    if (data.total_found === 0) {
+                        resultDiv.innerHTML = `<p class="error">No records found for this number.</p>`;
+                        return;
+                    }
+
+                    let html = `<h3>Results Found: ${data.total_found}</h3>`;
+                    data.results.forEach(res => {
+                        html += `
+                        <div class="card">
+                            <p><strong>Name:</strong> ${res.name || 'N/A'}</p>
+                            <p><strong>Phone:</strong> ${res.phoneNumber}</p>
+                            <p><strong>District:</strong> ${res.district || 'N/A'}</p>
+                            <p><strong>State:</strong> ${res.state || 'N/A'}</p>
+                            <p><strong>Pincode:</strong> ${res.pincode || 'N/A'}</p>
+                        </div>`;
+                    });
+                    resultDiv.innerHTML = html;
+
+                } catch (error) {
+                    loader.style.display = 'none';
+                    resultDiv.innerHTML = `<p class="error">Server Timeout or Error. Please try again.</p>`;
+                }
             }
+        </script>
+    </body>
+    </html>
+    """
+    return html_content
+
+
+# ============================================================
+# 3. नया Endpoint: /num/{phone}?api_key=YOUR_KEY
+# ============================================================
+@app.get("/num/{phone}")
+async def search_by_path(
+    phone: str, 
+    api_key: str = Query(..., description="API Key for authentication")
+):
+    # API Key को Query Parameter (?api_key=xyz) से चेक करें
+    row = get_key_info(api_key)
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+    if not row[3]: # is_active (0 या 1)
+        raise HTTPException(status_code=403, detail="API Key is disabled")
+    update_last_used(api_key)
+
+    conn = None
+    try:
+        conn = duckdb.connect()
+        conn.execute("INSTALL httpfs;")
+        conn.execute("LOAD httpfs;")
+        
+        if HF_TOKEN:
+            conn.execute(f"CREATE SECRET (TYPE HUGGINGFACE, TOKEN '{HF_TOKEN}');")
+
+        # सभी 46 फाइलों में सर्च
+        query = f"""
+            SELECT name, phoneNumber, district, state, pincode
+            FROM read_parquet('hf://datasets/{REPO_ID}/production_indexes/*.parquet')
+            WHERE phoneNumber = ?
+            LIMIT 10
+        """
+        
+        results = conn.execute(query, [phone]).fetchall()
+
+        if not results:
+            return {"status": "success", "query": phone, "total_found": 0, "results": []}
+
+        formatted_results = []
+        for r in results:
+            formatted_results.append({
+                "name": r[0], "phoneNumber": r[1], "district": r[2], "state": r[3], "pincode": r[4]
+            })
+
+        return {"status": "success", "query": phone, "total_found": len(formatted_results), "results": formatted_results}
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Footer read error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
+    finally:
+        if conn: conn.close()
 
 
 # ============================================================
-# 4. असली सर्च (DuckDB Real Data Search - ALL FILES)
+# 4. पुराना Search Endpoint (Header Auth के लिए, Swagger के लिए)
 # ============================================================
-
 @app.get("/search")
-async def search(
-    phone: str = Query(..., description="Phone number to search (e.g. 9876543210)"),
+async def search_header_auth(
+    phone: str = Query(..., description="Phone number to search"),
     api_key: str = Depends(get_current_api_key)
 ):
     conn = None
@@ -141,7 +205,6 @@ async def search(
         if HF_TOKEN:
             conn.execute(f"CREATE SECRET (TYPE HUGGINGFACE, TOKEN '{HF_TOKEN}');")
 
-        # यहाँ * लगाया गया है ताकि सारी 46 फाइलों में एक साथ सर्च हो
         query = f"""
             SELECT name, phoneNumber, district, state, pincode
             FROM read_parquet('hf://datasets/{REPO_ID}/production_indexes/*.parquet')
@@ -152,34 +215,25 @@ async def search(
         results = conn.execute(query, [phone]).fetchall()
 
         if not results:
-            return {
-                "status": "success",
-                "query": phone,
-                "message": "No records found for this phone number in any index file.",
-                "total_found": 0,
-                "results": []
-            }
+            return {"status": "success", "query": phone, "total_found": 0, "results": []}
 
         formatted_results = []
-        for row in results:
+        for r in results:
             formatted_results.append({
-                "name": row[0],
-                "phoneNumber": row[1],
-                "district": row[2],
-                "state": row[3],
-                "pincode": row[4]
+                "name": r[0], "phoneNumber": r[1], "district": r[2], "state": r[3], "pincode": r[4]
             })
 
-        return {
-            "status": "success",
-            "query": phone,
-            "total_found": len(formatted_results),
-            "results": formatted_results
-        }
+        return {"status": "success", "query": phone, "total_found": len(formatted_results), "results": formatted_results}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
-    
     finally:
-        if conn:
-            conn.close()
+        if conn: conn.close()
+
+
+# ============================================================
+# 5. Health Check
+# ============================================================
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "hf_token_configured": HF_TOKEN is not None}

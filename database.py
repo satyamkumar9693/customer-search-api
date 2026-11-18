@@ -1,4 +1,3 @@
-# database.py
 import sqlite3
 import secrets
 
@@ -28,6 +27,17 @@ def create_key(label: str) -> str:
     conn.close()
     return key
 
+def create_custom_key(custom_key: str, label: str):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("INSERT INTO api_keys (key, label) VALUES (?, ?)", (custom_key, label))
+        conn.commit()
+        return custom_key
+    except sqlite3.IntegrityError:
+        return None
+    finally:
+        conn.close()
+
 def get_key_info(key: str):
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute("SELECT * FROM api_keys WHERE key = ?", (key,)).fetchone()
@@ -42,9 +52,7 @@ def toggle_key(key: str, active: bool):
 
 def list_keys():
     conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute(
-        "SELECT id, key, label, is_active, created_at, last_used_at FROM api_keys"
-    ).fetchall()
+    rows = conn.execute("SELECT id, key, label, is_active, created_at, last_used_at FROM api_keys").fetchall()
     conn.close()
     return rows
 
